@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phase 0 model benchmark</title>
+    <style>
+      body {
+        margin: 24px;
+        color: #17202a;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      #status {
+        white-space: pre-wrap;
+        padding: 12px;
+        background: #f1f3f5;
+      }
+
+      #results {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 16px;
+      }
+
+      article {
+        padding: 12px;
+        border: 1px solid #d5d8dc;
+        border-radius: 8px;
+      }
+
+      .images {
+        display: flex;
+        gap: 8px;
+      }
+
+      img,
+      canvas {
+        width: min(100%, 220px);
+        height: auto;
+        image-rendering: auto;
+        border: 1px solid #ddd;
+      }
+
+      .source {
+        width: 110px;
+        image-rendering: pixelated;
+      }
+
+      button {
+        min-height: 40px;
+        padding: 8px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Phase 0: browser model benchmark</h1>
+    <p>
+      Synthetic-only fixtures. This page is for local development and is not
+      part of the production app.
+    </p>
+    <button id="run">Run benchmark</button>
+    <pre id="status">Ready</pre>
+    <section id="results"></section>
+    <script type="module" src="./phase0.js"></script>
+  </body>
+</html>
