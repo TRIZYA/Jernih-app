@@ -22,9 +22,13 @@ slider sebelum/sesudah, serta ekspor PNG/JPG/WebP. Preset Dokumen mendapat
 sharpen/kontras ringan otomatis; semua preset masih memakai model upscale umum.
 Puter.js memiliki login manual tersendiri, terpisah dari Firebase, dan dialog
 persetujuan sebelum gambar dikirim untuk saran atau OCR. OCR mengeluarkan teks
-hasil yang dapat disalin, bukan memulihkan isi dokumen yang hilang. Pembanding
-mendukung zoom bersama, geser, Reset tampilan (termasuk posisi slider), dan
-Ctrl/⌘ + gulir.
+hasil yang dapat disalin, bukan memulihkan isi dokumen yang hilang. Panel
+Analisis AI ditempatkan dalam kolom pratinjau, tepat di bawah kartu pratinjau,
+dengan latar putih.
+Pembanding mendukung zoom bersama, drag langsung di area di luar garis pembanding untuk
+geser saat zoom aktif, Reset tampilan (termasuk posisi slider), dan Ctrl/⌘ +
+gulir. Pemrosesan Kualitas 4× meminta login Google; semua hasil dibatasi hingga
+32 megapiksel dan aksi proses dinonaktifkan jika perkiraan hasil melampaui batas.
 
 ## 1. Halaman utama (ruang kerja)
 
@@ -38,6 +42,7 @@ Satu halaman dengan tiga keadaan: kosong, memproses, dan hasil.
 - Pratinjau gambar asli dengan dimensi dan ukuran file.
 - Panel pengaturan dan tombol utama "Perjelas gambar" yang menonjol.
 - Perkiraan dimensi hasil, misalnya `700 × 520 → 2800 × 2080`.
+- Kualitas 4× mensyaratkan login Google; hasil di atas 32 megapiksel menonaktifkan tombol proses dan menjelaskan cara mengatasinya.
 
 **Keadaan memproses**
 - Bar progres dengan persentase, jumlah tile (misalnya `12 / 36`), dan estimasi sisa waktu.
@@ -46,7 +51,7 @@ Satu halaman dengan tiga keadaan: kosong, memproses, dan hasil.
 - Saat model diunduh pertama kali: progres unduh dan keterangan bahwa itu hanya sekali.
 
 **Keadaan hasil**
-- Slider sebelum/sesudah dengan zoom dan geser yang tersinkron; Reset mengembalikan zoom, pan, dan slider ke posisi tengah.
+- Slider sebelum/sesudah dengan zoom dan geser langsung di pratinjau yang tersinkron; Reset mengembalikan zoom, pan, dan slider ke posisi tengah.
 - Info dimensi dan ukuran file sebelum dan sesudah.
 - Tombol "Unduh" dengan pilihan format dan kualitas, serta "Proses ulang" dan "Gambar baru".
 - Untuk preset Dokumen: banner "Teks kecil, nomor, dan tanda tangan bisa salah ditebak. Periksa dengan dokumen asli."

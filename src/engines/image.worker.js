@@ -2,13 +2,13 @@ import * as ort from 'onnxruntime-web'
 import * as tf from '@tensorflow/tfjs'
 import Upscaler from 'upscaler'
 import defaultModel from '@upscalerjs/default-model'
+import { MAX_OUTPUT_PIXELS } from './limits.js'
 
 const MODEL_URL = '/models/realesr-general-x4v3.onnx'
 const FAST_MODEL_URL = '/models/upscalerjs-default/model.json'
 const MODEL_SCALE = 4
 const TILE_SIZE = 128
 const TILE_PADDING = 12
-const MAX_OUTPUT_PIXELS = 32_000_000
 let activeJob
 
 ort.env.wasm.numThreads = 1

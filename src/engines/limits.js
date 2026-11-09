@@ -1,0 +1,1 @@
+export const MAX_OUTPUT_PIXELS = 32_000_000

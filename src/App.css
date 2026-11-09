@@ -10,6 +10,23 @@
   background: #f8faf6;
 }
 
+.ai-advisor-wide {
+  margin: 0;
+  padding: 20px;
+  border-color: #e7ebe4;
+  background: #fff;
+  box-shadow: 0 8px 26px rgba(43, 62, 45, 0.035);
+}
+
+.ai-advisor-wide .ai-action {
+  width: auto;
+  min-width: 190px;
+}
+
+.ai-advisor-wide .puter-account {
+  justify-content: flex-start;
+}
+
 .ai-advisor-heading h3 {
   margin: 4px 0 7px;
   color: var(--ink);
@@ -365,6 +382,13 @@
   gap: 20px;
 }
 
+.preview-column {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
 .preview-card,
 .settings-card {
   min-width: 0;
@@ -509,13 +533,21 @@
   z-index: 1;
 }
 
-.comparison-view.is-pan-mode {
-  cursor: grab;
+.comparison-view {
   touch-action: none;
 }
 
-.comparison-view.is-pan-mode:active {
+.comparison-view.is-pan-hover,
+.comparison-view.is-pan {
+  cursor: grab;
+}
+
+.comparison-view.is-pan:active {
   cursor: grabbing;
+}
+
+.comparison-view.is-compare {
+  cursor: ew-resize;
 }
 
 .comparison-label {
@@ -576,10 +608,6 @@
   height: 100%;
   margin: 0;
   opacity: 0;
-  cursor: ew-resize;
-}
-
-.comparison-range:disabled {
   pointer-events: none;
 }
 
@@ -616,12 +644,6 @@
   opacity: 0.45;
 }
 
-.compare-tool-button.active {
-  color: #fff;
-  border-color: #527b58;
-  background: #527b58;
-}
-
 .compare-zoom-value {
   min-width: 43px;
   color: #59665a;
@@ -634,6 +656,13 @@
   flex-basis: 100%;
   color: #8a9289;
   font-size: 10px;
+}
+
+.limit-note {
+  margin: 9px 1px 0;
+  color: #a4413d;
+  font-size: 10px;
+  line-height: 1.55;
 }
 
 .puter-account {
@@ -1277,7 +1306,8 @@
   }
 
   .upload-zone > .button {
-    margin-left: 58px;
+    width: 100%;
+    margin-left: 0;
   }
 
   .upload-meta {

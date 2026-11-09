@@ -22,17 +22,20 @@ Buka `http://localhost:5173`. Untuk mengulang benchmark Fase 0, buka
 sintetis dan model lokal dalam `public/models`.
 
 Unggah gambar JPG, PNG, atau WebP hingga 20 MB. Hasil dibatasi hingga 32
-megapiksel. Semua inferensi berjalan lokal melalui worker; browser mencoba
-Real-ESRGAN WebGPU lalu WASM, atau UpscalerJS untuk mode Cepat, dan menggunakan
-resampling + sharpen jika mesin AI tidak tersedia.
+megapiksel; tombol proses dinonaktifkan jika dimensi hasil melampaui batas.
+Skala Kualitas 4× memerlukan login Google, sedangkan Cepat 2× dan Kualitas 2×
+tetap dapat dipakai tanpa login. Semua inferensi berjalan lokal melalui worker;
+browser mencoba Real-ESRGAN WebGPU lalu WASM, atau UpscalerJS untuk mode Cepat,
+dan menggunakan resampling + sharpen jika mesin AI tidak tersedia.
 
-Pada hasil, bandingkan gambar asli dan hasil dengan slider. Gunakan tombol
-zoom untuk memperbesar, aktifkan **Geser gambar** untuk menggeser tampilan
-keduanya secara sinkron, atau gunakan Ctrl/⌘ + gulir. Tombol Reset mengembalikan
-tampilan, pan, dan posisi slider. Putar dokumen 90° sebelum proses memakai
-tombol putar di panel pratinjau. Preset Dokumen menerapkan ketajaman dan kontras
-ringan; setelah upscale, OCR Puter dapat mengekstrak teks agar bisa dibaca atau
-disalin. OCR bukan jaminan akurasi dan tidak memperbaiki isi piksel gambar.
+Pada hasil, bandingkan gambar asli dan hasil dengan menyeret garis pembanding.
+Gunakan tombol zoom untuk memperbesar; ketika zoom aktif, seret area di luar
+garis untuk menggeser kedua gambar secara sinkron. Ctrl/⌘ + gulir juga mengubah
+zoom. Tombol Reset mengembalikan tampilan, pan, dan posisi slider. Putar dokumen
+90° sebelum proses memakai tombol putar di panel pratinjau. Preset Dokumen
+menerapkan ketajaman dan kontras ringan; setelah upscale, OCR Puter dapat
+mengekstrak teks agar bisa dibaca atau disalin. OCR bukan jaminan akurasi dan
+tidak memperbaiki isi piksel gambar.
 
 ## Teknologi
 
@@ -65,10 +68,12 @@ dialog sebelum gambar dikirim ke Puter. OCR memakai hasil upscale dan dapat
 keliru; periksa kembali teks pada sumber asli. Layanan Puter mungkin memiliki
 kuota atau biaya akun. Upscale lokal tetap bisa digunakan tanpa login.
 
-Login Firebase/Google di header adalah autentikasi yang berdiri sendiri dan
-tidak melindungi fitur Puter atau API lain. Pada frontend statis, UI bukan
-kontrol akses server yang kuat. Firebase Web API key memang publik; jangan
-pernah memasukkan service-account key atau secret server ke variabel `VITE_*`.
+Login Google di header menggunakan Firebase Authentication dan diwajibkan oleh
+UI untuk memilih proses Kualitas 4×. Ini hanya gerbang UI di aplikasi frontend:
+proses gambar tetap lokal dan bukan kontrol akses server yang kuat. Login Google
+tidak melindungi fitur Puter atau API lain. Firebase Web API key memang publik;
+jangan pernah memasukkan service-account key atau secret server ke variabel
+`VITE_*`.
 
 ### Deploy ke Vercel
 

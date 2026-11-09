@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { createUpscaleJob } from './engines/upscale.js'
+import { MAX_OUTPUT_PIXELS } from './engines/limits.js'
 import { firebaseAuth, isFirebaseConfigured } from './services/firebase.js'
 import {
   analyzeImageWithPuter,
@@ -136,7 +137,7 @@ function App() {
   const [comparePosition, setComparePosition] = useState(50)
   const [compareZoom, setCompareZoom] = useState(1)
   const [comparePan, setComparePan] = useState({ x: 0, y: 0 })
-  const [isPanMode, setIsPanMode] = useState(false)
+  const [comparePointerMode, setComparePointerMode] = useState('')
   const [downloadFormat, setDownloadFormat] = useState('image/png')
   const [downloadQuality, setDownloadQuality] = useState(0.92)
   const [exporting, setExporting] = useState(false)
@@ -229,7 +230,7 @@ function App() {
     setCompareZoom(1)
     setComparePan({ x: 0, y: 0 })
     setComparePosition(50)
-    setIsPanMode(false)
+    setComparePointerMode('')
     panPointerRef.current = null
   }
 
@@ -240,21 +241,47 @@ function App() {
   }
 
   function handleComparePointerDown(event) {
-    const targetInput = event.target instanceof HTMLInputElement ? event.target : null
-    if (!isPanMode || event.target.closest('button') || (targetInput && !targetInput.disabled)) return
+    if (event.target.closest('button')) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const pointerX = event.clientX - bounds.left
+    const dividerX = (comparePosition / 100) * bounds.width
+    const mode = Math.abs(pointerX - dividerX) <= 18 ? 'compare' : 'pan'
+
+    if (mode === 'pan' && compareZoom <= 1) return
+    event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     panPointerRef.current = {
       pointerId: event.pointerId,
+      mode,
       startX: event.clientX,
       startY: event.clientY,
       panX: comparePan.x,
       panY: comparePan.y,
     }
+    setComparePointerMode(mode)
+    if (mode === 'compare') {
+      setComparePosition(Math.max(0, Math.min(100, (pointerX / bounds.width) * 100)))
+    }
   }
 
   function handleComparePointerMove(event) {
     const start = panPointerRef.current
-    if (!start || start.pointerId !== event.pointerId) return
+    if (!start || start.pointerId !== event.pointerId) {
+      const bounds = event.currentTarget.getBoundingClientRect()
+      const pointerX = event.clientX - bounds.left
+      const dividerX = (comparePosition / 100) * bounds.width
+      const nearDivider = Math.abs(pointerX - dividerX) <= 18
+      setComparePointerMode(nearDivider ? '' : compareZoom > 1 ? 'pan-hover' : '')
+      return
+    }
+
+    if (start.mode === 'compare') {
+      const bounds = event.currentTarget.getBoundingClientRect()
+      const pointerX = event.clientX - bounds.left
+      setComparePosition(Math.max(0, Math.min(100, (pointerX / bounds.width) * 100)))
+      return
+    }
+
     const maxX = (event.currentTarget.clientWidth * (compareZoom - 1)) / 2
     const maxY = (event.currentTarget.clientHeight * (compareZoom - 1)) / 2
     setComparePan({
@@ -264,7 +291,10 @@ function App() {
   }
 
   function stopComparePan(event) {
-    if (panPointerRef.current?.pointerId === event.pointerId) panPointerRef.current = null
+    if (panPointerRef.current?.pointerId === event.pointerId) {
+      panPointerRef.current = null
+      setComparePointerMode('')
+    }
   }
 
   async function handlePuterSignIn() {
@@ -551,6 +581,15 @@ function App() {
 
   async function processImage() {
     if (!image || isProcessing || isRotating) return
+    const requestedScale = quality === 'fast' ? 2 : Number(scale)
+    if (image.width * image.height * requestedScale ** 2 > MAX_OUTPUT_PIXELS) {
+      setError('Ukuran hasil melebihi batas 32 megapiksel. Pilih skala lebih kecil atau gambar beresolusi lebih rendah.')
+      return
+    }
+    if (requestedScale === 4 && !authUser) {
+      setError('Masuk dengan Google sebelum memproses gambar pada skala 4×.')
+      return
+    }
     setError('')
     setResult(null)
     setRecognizedText('')
@@ -659,7 +698,91 @@ function App() {
   const outputScale = quality === 'fast' ? 2 : Number(scale)
   const estimatedWidth = image ? image.width * outputScale : 0
   const estimatedHeight = image ? image.height * outputScale : 0
+  const isOutputTooLarge = Boolean(image && estimatedWidth * estimatedHeight > MAX_OUTPUT_PIXELS)
+  const requiresGoogleSignIn = outputScale === 4 && !authUser
   const resultOutputScale = result && image ? Math.max(result.width / image.width, result.height / image.height) : 1
+
+  const aiAdvisor = (
+    <section className="ai-advisor ai-advisor-wide" aria-labelledby="ai-advisor-title">
+      <div className="ai-advisor-heading">
+        <span className="panel-kicker">SARAN TAMBAHAN</span>
+        <h3 id="ai-advisor-title">Analisis AI</h3>
+      </div>
+      {!puterReady ? (
+        <>
+          <p className="ai-advisor-note">{puterError || 'Menyiapkan layanan Puter…'} Fitur lokal tetap bisa dipakai.</p>
+          {puterError && (
+            <button className="button button-outline ai-action" type="button" onClick={() => {
+              setPuterError('')
+              initializePuter().then(({ user }) => {
+                setPuterUser(user)
+                setPuterReady(true)
+              }).catch((loadError) => setPuterError(loadError.message || 'SDK Puter tidak dapat dimuat.'))
+            }}>
+              Coba muat ulang Puter
+            </button>
+          )}
+        </>
+      ) : !puterUser ? (
+        <>
+          <p className="ai-advisor-note">Masuk secara terpisah dengan akun Puter untuk memakai saran AI dan OCR. Login Firebase/Google tidak masuk otomatis ke Puter.</p>
+          {puterError && <p className="ai-error" role="alert">{puterError}</p>}
+          <button className="button button-outline ai-action" type="button" onClick={handlePuterSignIn}>
+            Masuk dengan Puter
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="puter-account">
+            <span>{puterUser.username || puterUser.email || 'Akun Puter aktif'}</span>
+            <button className="text-button" type="button" onClick={handlePuterSignOut}>Keluar Puter</button>
+          </div>
+          <p className="ai-advisor-note">
+            Dapatkan perkiraan jenis gambar, tingkat blur, dan saran pengaturan. Gambar hanya dikirim setelah persetujuanmu.
+          </p>
+          <button
+            className="button button-outline ai-action"
+            type="button"
+            onClick={() => {
+              setConsentAction('advice')
+              setIsConsentOpen(true)
+            }}
+            disabled={isAnalyzing || isRecognizingText || isProcessing || isRotating}
+          >
+            {isAnalyzing ? 'Menganalisis gambar…' : 'Minta saran AI'}
+          </button>
+          {analysisError && <p className="ai-error" role="alert">{analysisError}</p>}
+          {result && (
+            <button
+              className="button button-outline ai-action"
+              type="button"
+              onClick={() => {
+                setConsentAction('ocr')
+                setIsConsentOpen(true)
+              }}
+              disabled={isAnalyzing || isRecognizingText || isProcessing}
+            >
+              {isRecognizingText ? 'Membaca teks…' : 'Baca teks hasil (OCR)'}
+            </button>
+          )}
+          {ocrError && <p className="ai-error" role="alert">{ocrError}</p>}
+          {recommendation && (
+            <div className="ai-recommendation" role="status">
+              <strong>
+                Saran: {PRESETS.find((item) => item.id === recommendation.preset)?.label} · {recommendation.scale}×
+              </strong>
+              <span>Tingkat blur: {recommendation.blur === 'low' ? 'rendah' : recommendation.blur === 'medium' ? 'sedang' : 'tinggi'}</span>
+              <p>{recommendation.explanation}</p>
+              <small>Perkiraan AI, bukan pengukuran pasti. Teks dan detail mungkin ditebak keliru.</small>
+              <button className="button button-outline ai-action" type="button" onClick={applyRecommendation}>
+                Terapkan saran
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
 
   return (
     <div className="app-shell">
@@ -679,7 +802,7 @@ function App() {
           {authUser ? (
             <div className="auth-controls">
               <span className="auth-user" title={authUser.email || authUser.displayName}>
-                Firebase · {authUser.displayName || authUser.email}
+                Google · {authUser.displayName || authUser.email}
               </span>
               <button className="auth-button" type="button" onClick={handleFirebaseSignOut} disabled={authLoading}>
                 Keluar
@@ -691,9 +814,9 @@ function App() {
               type="button"
               onClick={handleFirebaseSignIn}
               disabled={!isFirebaseConfigured || authLoading}
-              title={!isFirebaseConfigured ? 'Konfigurasi Firebase belum tersedia.' : 'Login Firebase terpisah dari akun Puter.'}
+              title={!isFirebaseConfigured ? 'Konfigurasi login Google belum tersedia.' : 'Masuk dengan akun Google.'}
             >
-              {authLoading ? 'Memeriksa Firebase…' : 'Masuk Firebase'}
+              {authLoading ? 'Memeriksa akun…' : 'Masuk Google'}
             </button>
           )}
         </div>
@@ -755,7 +878,9 @@ function App() {
         )}
 
         {image ? (
+          <>
           <section className="editor-grid" aria-label="Pengaturan gambar">
+            <div className="preview-column">
             <div className="preview-card">
               <div className="panel-heading">
                 <div>
@@ -777,12 +902,15 @@ function App() {
               <div className="image-preview">
                 {result ? (
                   <div
-                    className={`comparison-view ${isPanMode ? 'is-pan-mode' : ''}`}
+                    className={`comparison-view ${comparePointerMode ? `is-${comparePointerMode}` : ''}`}
                     style={{ aspectRatio: `${image.width} / ${image.height}` }}
                     onPointerDown={handleComparePointerDown}
                     onPointerMove={handleComparePointerMove}
                     onPointerUp={stopComparePan}
                     onPointerCancel={stopComparePan}
+                    onPointerLeave={() => {
+                      if (!panPointerRef.current) setComparePointerMode('')
+                    }}
                     onWheel={(event) => {
                       if (event.ctrlKey || event.metaKey) {
                         event.preventDefault()
@@ -819,7 +947,6 @@ function App() {
                       max="100"
                       value={comparePosition}
                       onChange={(event) => setComparePosition(Number(event.target.value))}
-                      disabled={isPanMode}
                     />
                   </div>
                 ) : (
@@ -850,20 +977,10 @@ function App() {
                   <button className="compare-tool-button compare-reset" type="button" onClick={resetCompareView} title="Reset zoom, geser, dan posisi pembanding">
                     Reset tampilan
                   </button>
-                  <button
-                    className={`compare-tool-button compare-pan-toggle ${isPanMode ? 'active' : ''}`}
-                    type="button"
-                    aria-pressed={isPanMode}
-                    onClick={() => {
-                      setIsPanMode((active) => !active)
-                      panPointerRef.current = null
-                    }}
-                    disabled={compareZoom <= 1}
-                  >
-                    {isPanMode ? 'Selesai geser' : 'Geser gambar'}
-                  </button>
                   <span className="compare-help">
-                    {isPanMode ? 'Seret gambar untuk menggeser · slider sementara nonaktif' : 'Ctrl/⌘ + gulir untuk zoom'}
+                    {compareZoom > 1
+                      ? 'Seret garis untuk membandingkan · seret area lain untuk menggeser · Ctrl/⌘ + gulir untuk zoom'
+                      : 'Seret garis untuk membandingkan · Ctrl/⌘ + gulir untuk zoom'}
                   </span>
                 </div>
               )}
@@ -925,6 +1042,8 @@ function App() {
                 </section>
               )}
             </div>
+            {aiAdvisor}
+            </div>
 
             <aside className="settings-card">
               <div className="panel-heading">
@@ -959,86 +1078,6 @@ function App() {
                   <p>Teks kecil, nomor, dan tanda tangan bisa berubah. Selalu periksa dengan dokumen asli.</p>
                 </div>
               )}
-
-              <section className="ai-advisor" aria-labelledby="ai-advisor-title">
-                <div className="ai-advisor-heading">
-                  <span className="panel-kicker">SARAN TAMBAHAN</span>
-                  <h3 id="ai-advisor-title">Analisis AI</h3>
-                </div>
-                {!puterReady ? (
-                  <>
-                    <p className="ai-advisor-note">{puterError || 'Menyiapkan layanan Puter…'} Fitur lokal tetap bisa dipakai.</p>
-                    {puterError && (
-                      <button className="button button-outline ai-action" type="button" onClick={() => {
-                        setPuterError('')
-                        initializePuter().then(({ user }) => {
-                          setPuterUser(user)
-                          setPuterReady(true)
-                        }).catch((loadError) => setPuterError(loadError.message || 'SDK Puter tidak dapat dimuat.'))
-                      }}>
-                        Coba muat ulang Puter
-                      </button>
-                    )}
-                  </>
-                ) : !puterUser ? (
-                  <>
-                    <p className="ai-advisor-note">Masuk secara terpisah dengan akun Puter untuk memakai saran AI dan OCR. Login Firebase/Google tidak masuk otomatis ke Puter.</p>
-                    {puterError && <p className="ai-error" role="alert">{puterError}</p>}
-                    <button className="button button-outline ai-action" type="button" onClick={handlePuterSignIn}>
-                      Masuk dengan Puter
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="puter-account">
-                      <span>{puterUser.username || puterUser.email || 'Akun Puter aktif'}</span>
-                      <button className="text-button" type="button" onClick={handlePuterSignOut}>Keluar Puter</button>
-                    </div>
-                    <p className="ai-advisor-note">
-                      Dapatkan perkiraan jenis gambar, tingkat blur, dan saran pengaturan. Gambar hanya dikirim setelah persetujuanmu.
-                    </p>
-                    <button
-                      className="button button-outline ai-action"
-                      type="button"
-                      onClick={() => {
-                        setConsentAction('advice')
-                        setIsConsentOpen(true)
-                      }}
-                      disabled={isAnalyzing || isRecognizingText || isProcessing || isRotating}
-                    >
-                      {isAnalyzing ? 'Menganalisis gambar…' : 'Minta saran AI'}
-                    </button>
-                    {analysisError && <p className="ai-error" role="alert">{analysisError}</p>}
-                    {result && (
-                      <button
-                        className="button button-outline ai-action"
-                        type="button"
-                        onClick={() => {
-                          setConsentAction('ocr')
-                          setIsConsentOpen(true)
-                        }}
-                        disabled={isAnalyzing || isRecognizingText || isProcessing}
-                      >
-                        {isRecognizingText ? 'Membaca teks…' : 'Baca teks hasil (OCR)'}
-                      </button>
-                    )}
-                    {ocrError && <p className="ai-error" role="alert">{ocrError}</p>}
-                    {recommendation && (
-                      <div className="ai-recommendation" role="status">
-                        <strong>
-                          Saran: {PRESETS.find((item) => item.id === recommendation.preset)?.label} · {recommendation.scale}×
-                        </strong>
-                        <span>Tingkat blur: {recommendation.blur === 'low' ? 'rendah' : recommendation.blur === 'medium' ? 'sedang' : 'tinggi'}</span>
-                        <p>{recommendation.explanation}</p>
-                        <small>Perkiraan AI, bukan pengukuran pasti. Teks dan detail mungkin ditebak keliru.</small>
-                        <button className="button button-outline ai-action" type="button" onClick={applyRecommendation}>
-                          Terapkan saran
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </section>
 
               <fieldset className="setting-group" disabled={isProcessing || isRotating}>
                 <legend>Mode pemrosesan</legend>
@@ -1104,11 +1143,23 @@ function App() {
                   {isCancelling ? 'Membatalkan…' : 'Batalkan proses'}
                 </button>
               ) : (
-                <button className="button button-primary process-button" type="button" onClick={processImage} disabled={isRotating}>
+                <button
+                  className="button button-primary process-button"
+                  type="button"
+                  onClick={processImage}
+                  disabled={isRotating || isOutputTooLarge || requiresGoogleSignIn}
+                >
                   <Icon name="sparkle" size={19} />
                   {isRotating ? 'Memutar gambar…' : result ? 'Proses ulang' : 'Perjelas gambar'}
                 </button>
               )}
+              {isOutputTooLarge ? (
+                <p className="limit-note" role="alert">
+                  Hasil diperkirakan {estimatedWidth.toLocaleString('id-ID')} × {estimatedHeight.toLocaleString('id-ID')} px, melebihi batas 32 megapiksel. Pilih skala lebih kecil atau gambar beresolusi lebih rendah.
+                </p>
+              ) : requiresGoogleSignIn ? (
+                <p className="unavailable-note" role="status">Masuk dengan Google untuk membuka pemrosesan skala 4×.</p>
+              ) : null}
               {result && (
                 <p className="success-note">
                   Selesai · {formatBytes(result.blob.size)} · Hasil AI dapat menebak detail yang berbeda dari aslinya.
@@ -1119,13 +1170,14 @@ function App() {
                   {result.warnings.join(' ')}
                 </div>
               )}
-              {!result && !isProcessing && (
+              {!result && !isProcessing && !isOutputTooLarge && !requiresGoogleSignIn && (
                 <p className="unavailable-note">
                   Model berjalan lokal di browser. Proses gambar besar bisa memerlukan waktu lebih lama.
                 </p>
               )}
             </aside>
           </section>
+          </>
         ) : (
           <section className="empty-guidance" aria-label="Tentang Jernih">
             <div className="guidance-icon"><Icon name="shield" size={20} /></div>
