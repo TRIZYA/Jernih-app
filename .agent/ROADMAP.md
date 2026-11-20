@@ -9,7 +9,12 @@ menjalankan ONNX melalui WASM dan UpscalerJS di browser pada tiga fixture
 sintetis; browser ini tetap tidak menyediakan adapter WebGPU dan ponsel fisik
 belum diuji. Mesin Fase 2 kini terhubung di Web Worker dengan tile, progres,
 pembatalan, fallback, dan ekspor gambar. UI Fase 3 mendukung alur proses,
-perbandingan dengan zoom/geser sinkron, rotasi dokumen, serta unduhan. Fase 5
+perbandingan dengan zoom/geser sinkron, rotasi dokumen, serta unduhan. Fase 4
+menyediakan pengurangan noise, slider ketajaman/kontras dengan nilai awal per
+preset, dan OCR lokal yang menyiapkan gambar dengan grayscale, kontras, dan
+skala adaptif serta membandingkan kata yang disejajarkan. Evaluasi kualitas
+dibatasi pada fixture sintetis dan sertifikat uji; uji sampel tidak membuktikan
+akurasi umum. Saran AI Fase 5
 memakai autentikasi Puter terpisah dari Firebase dan persetujuan eksplisit
 sebelum gambar dikirim ke layanan AI.
 
@@ -60,6 +65,7 @@ Jika salah satu langkah di atas belum jalan, aplikasi belum terasa sebagai upsca
 - Validasi ulang setelah path model final: sesi ONNX/WASM 4,403 ms; inferensi 3,382 ms (foto), 1,873 ms (ilustrasi), 2,467 ms (dokumen). UpscalerJS/WebGL: model siap 667 ms; inferensi 2,761 ms, 589 ms, 877 ms. Run ulang menghasilkan waktu yang bervariasi; ini pengukuran satu kali per fixture, bukan median/benchmark lintas perangkat.
 - JS heap tercatat 82.4→97.1 MiB pada run awal dan 91.0→94.2 MiB pada validasi ulang. Ini bukan peak memory dan tidak mencakup seluruh memori WASM/GPU.
 - WebGPU API terdeteksi, tetapi tidak ada adapter (`no available backend found`), sehingga inferensi WebGPU belum teruji.
+- Jalur CPU TensorFlow.js yang sempat dijadikan fallback mode cepat pernah sangat lambat pada benchmark (baru 34% setelah 110 detik untuk fixture 343 × 361 px); mode cepat kini tidak memakai CPU dan beralih ke jalur mesin kualitas bila WebGL tidak tersedia.
 
 ## Fase 1: Persiapan & konfigurasi awal
 - [x] Putuskan nama aplikasi dan repository: `Jernih` / `Jernih-app`.
@@ -71,14 +77,14 @@ Jika salah satu langkah di atas belum jalan, aplikasi belum terasa sebagai upsca
 ## Fase 2: Mesin pemrosesan
 - [x] Antarmuka mesin (`engines/`): menerima gambar, skala, mode, dan callback progres; mengembalikan hasil yang dapat dibatalkan.
 - [x] ONNX Real-ESRGAN mencoba WebGPU lalu WASM. Inferensi WASM teruji; adapter WebGPU tidak tersedia pada browser uji.
-- [x] Mode Cepat UpscalerJS memakai WebGL jika tersedia di worker dan CPU sebagai cadangan.
+- [x] Mode Cepat UpscalerJS memakai WebGL di worker; jika tidak tersedia, alihkan ke mesin kualitas alih-alih CPU TensorFlow.js yang sangat lambat.
 - [x] Mesin klasik berbasis resampling Canvas + sharpen sebagai cadangan akhir; fallback paksa belum diuji.
 - [x] Pemrosesan tile dengan konteks: ONNX tile inti 128 px + padding 12 px; UpscalerJS patch 64 px + padding 8 px.
 - [x] Inferensi dijalankan di Web Worker.
 - [x] Progres tile/persentase, estimasi sisa kasar saat inferensi, dan pembatalan worker.
 - [x] Tensor/sesi ONNX dibersihkan per tile dan setelah selesai; worker dihentikan setelah hasil atau pembatalan.
 - [x] Batas hasil 32 megapiksel dengan pesan yang jelas; batas unggah 20 MB.
-- [x] Deteksi runtime melalui percobaan WebGPU → WASM, WebGL → CPU, lalu fallback klasik.
+- [x] Deteksi runtime melalui percobaan WebGPU → WASM dan UpscalerJS/WebGL; jika WebGL tidak tersedia, alihkan mode cepat ke mesin kualitas, lalu fallback klasik bila mesin AI gagal.
 - [x] Penanganan format tidak didukung, gambar rusak, hasil terlalu besar, kegagalan mesin, dan ekspor format.
 - [x] Diuji di browser dengan gambar lokal 343 × 361 px: ONNX/WASM 2× dan 4×, UpscalerJS/WebGL 2×, pembatalan, perbandingan, dan ekspor WebP.
 - Catatan ukuran build: worker ONNX berukuran sekitar 2.3 MB dan runtime WASM sekitar 29.5 MB mentah (sekitar 7.1 MB gzip); audit ukuran/hosting perlu dilakukan sebelum deploy.
@@ -98,20 +104,25 @@ Jika salah satu langkah di atas belum jalan, aplikasi belum terasa sebagai upsca
 - [x] Rotasi gambar 90° kiri/kanan sebelum pemrosesan dokumen.
 
 ## Fase 4: Peningkatan kualitas
-- [ ] Pra-proses untuk mengurangi artefak kompresi atau noise (opsional).
-- [ ] Pasca-proses sharpen dan kontras dengan slider.
-- [ ] Penyetelan preset Dokumen: perlakuan teks dan garis.
-- [ ] Evaluasi visual sebelum/sesudah pada set gambar uji tetap.
-- [ ] Pemeriksa teks (tesseract.js): bandingkan OCR sebelum dan sesudah, tandai kemungkinan karakter berubah.
-- Catatan: preset Dokumen kini menerapkan ketajaman/kontras ringan otomatis, tetapi belum ada slider; OCR teks hasil tersedia via Puter Mistral dengan persetujuan.
+- [x] Pra-proses opsional untuk mengurangi noise/artefak ringan melalui pencampuran blur halus; dapat mengurangi detail halus.
+- [x] Pasca-proses ketajaman dan kontras dengan slider, dijalankan bertahap di worker.
+- [x] Nilai awal preset Dokumen lebih menekankan reduksi noise, ketajaman, dan kontras; model upscale tetap model umum.
+- [x] Evaluasi visual dan perilaku peningkatan pada fixture dokumen sintetis dan sertifikat uji; hasil menyarankan pengaturan membantu pratinjau tetapi tidak memulihkan karakter kecil.
+- [x] OCR lokal Tesseract.js membandingkan teks sumber dan hasil serta menyorot kata yang berbeda setelah penyelarasan.
+- [x] Uji OCR pada fixture sintetis dan `public/uji/sertifikat.jpeg`; sampel sertifikat menunjukkan OCR tidak cukup andal untuk memvalidasi isi.
+- [x] Uji browser pada fixture sintetis 220 × 80 px: proses UpscalerJS/WebGL 2× dan OCR mengenali `JERNIH 2026` pada gambar asli maupun hasil.
+- [x] Uji OCR pada `public/uji/sertifikat.jpeg` (JPEG 366 × 480 px, 99 KB) dengan model lokal: grayscale + kontras + pembesaran hingga sisi panjang 1.500 px menambah jumlah teks yang terdeteksi dibanding input mentah, tetapi transkripsi tetap berbeda luas pada gambar asli dan hasil UpscalerJS/WebGL 2× (732 × 960 px). Perbedaan tidak mengukur akurasi tanpa transkripsi referensi; OCR bukan validasi isi sertifikat.
+- [x] Verifikasi ulang di browser pada sertifikat: proses ONNX/WASM 2× selesai; OCR menampilkan 395 karakter dari gambar asli dan 338 dari hasil, dengan 237 token sumber ditandai berbeda. Keluaran masih didominasi teks yang tidak terbaca. Eksperimen binarisasi juga menambah karakter/confidence tanpa ground truth, jadi tidak dipilih sebagai default.
+- [x] Evaluasi pratinjau dan pengaturan ketajaman, noise, serta kontras pada fixture dokumen sintetis dan sertifikat; detail kecil pada sertifikat tetap terbatas oleh resolusi sumber. Pengujian tidak mewakili semua jenis dokumen/perangkat.
+- Catatan: model bahasa Indonesia/Inggris diunduh pada pemakaian OCR pertama kali; berkas gambar tetap diproses lokal dan tidak dikirim.
 
 ## Fase 5: Fitur AI pendukung (puter.js)
 - [x] Analisis gambar: tipe, perkiraan tingkat blur, dan saran preset serta skala.
 - [x] Persetujuan pengguna eksplisit sebelum gambar dikirim ke Puter AI.
 - [x] Fallback jika AI/SDK tidak tersedia; pemrosesan lokal tetap berjalan.
-- [x] Login Puter eksplisit/terpisah untuk saran AI dan OCR; Firebase tidak menjadi gerbang akses Puter.
-- Catatan: Puter SDK tidak mengirim gambar sebelum persetujuan pengguna. Login Firebase/Google di header tidak ditautkan ke sesi Puter. Pemrosesan gambar inti tetap lokal.
-- [ ] Uji login Puter, saran AI, dan OCR end-to-end pada sesi Puter pengguna.
+- [x] Login Puter eksplisit/terpisah untuk saran AI; Firebase tidak menjadi gerbang akses Puter.
+- Catatan: Puter SDK tidak mengirim gambar sebelum persetujuan pengguna. Login Firebase/Google di header tidak ditautkan ke sesi Puter. OCR dan pemrosesan gambar inti berjalan lokal.
+- [ ] Uji login Puter dan saran AI end-to-end pada sesi Puter pengguna.
 
 ## Fase 6: Performa & kemudahan
 - [ ] Antrean batch dan unduh ZIP.

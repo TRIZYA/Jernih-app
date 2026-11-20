@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
+import { createWorker } from 'tesseract.js'
 import { createUpscaleJob } from './engines/upscale.js'
 import { MAX_OUTPUT_PIXELS } from './engines/limits.js'
+import { getChangedTokenIndices } from './engines/ocrComparison.js'
+import { prepareOcrImage } from './engines/ocrImage.js'
 import { firebaseAuth, isFirebaseConfigured } from './services/firebase.js'
 import {
   analyzeImageWithPuter,
   initializePuter,
-  recognizeTextWithPuter,
   signInToPuter,
   signOutFromPuter,
 } from './services/puter.js'
@@ -27,6 +29,12 @@ const PRESETS = [
   { id: 'illustration', label: 'Ilustrasi', description: 'Grafis dan anime' },
 ]
 
+const PRESET_ADJUSTMENTS = {
+  photo: { noiseReduction: 0, sharpen: 0, contrast: 0 },
+  document: { noiseReduction: 30, sharpen: 35, contrast: 8 },
+  illustration: { noiseReduction: 0, sharpen: 10, contrast: 0 },
+}
+
 function formatBytes(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -41,6 +49,31 @@ function getImageType(file) {
   if (SUPPORTED_TYPES.has(file.type)) return file.type
   const extension = file.name.split('.').pop()?.toLowerCase()
   return EXTENSION_TYPES[extension] || file.type
+}
+
+function OcrTextColumn({ label, text, comparisonText }) {
+  const tokens = [...text.matchAll(/[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu)]
+  const changedTokens = getChangedTokenIndices(text, comparisonText)
+  const content = tokens.flatMap((token, index) => {
+    const previous = tokens[index - 1]
+    const start = previous ? previous.index + previous[0].length : 0
+    const separator = text.slice(start, token.index)
+    return [
+      separator,
+      <span className={changedTokens.has(index) ? 'ocr-changed-token' : ''} key={`${index}-${token[0]}`}>
+        {token[0]}
+      </span>,
+    ]
+  })
+  const last = tokens.at(-1)
+  content.push(text.slice(last ? last.index + last[0].length : 0))
+
+  return (
+    <div className="ocr-text-column">
+      <strong>{label}</strong>
+      <pre>{content}</pre>
+    </div>
+  )
 }
 
 function Icon({ name, size = 20 }) {
@@ -118,17 +151,18 @@ function App() {
   const [puterReady, setPuterReady] = useState(false)
   const [puterError, setPuterError] = useState('')
   const [isConsentOpen, setIsConsentOpen] = useState(false)
-  const [consentAction, setConsentAction] = useState('advice')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
   const [recommendation, setRecommendation] = useState(null)
   const [isRecognizingText, setIsRecognizingText] = useState(false)
-  const [recognizedText, setRecognizedText] = useState('')
+  const [ocrProgress, setOcrProgress] = useState(null)
+  const [ocrComparison, setOcrComparison] = useState(null)
   const [ocrError, setOcrError] = useState('')
   const [copyError, setCopyError] = useState('')
   const [image, setImage] = useState(null)
   const [result, setResult] = useState(null)
   const [preset, setPreset] = useState('photo')
+  const [adjustments, setAdjustments] = useState(PRESET_ADJUSTMENTS.photo)
   const [quality, setQuality] = useState('quality')
   const [scale, setScale] = useState(4)
   const [progress, setProgress] = useState(null)
@@ -316,14 +350,11 @@ function App() {
     setPuterError('')
     analysisControllerRef.current?.abort()
     analysisControllerRef.current = null
-    ocrRequestIdRef.current += 1
     setIsAnalyzing(false)
-    setIsRecognizingText(false)
     try {
       await signOutFromPuter()
       setPuterUser(null)
       setRecommendation(null)
-      setRecognizedText('')
     } catch (signOutError) {
       setPuterError(signOutError.message || 'Logout Puter gagal.')
     }
@@ -380,23 +411,59 @@ function App() {
   }
 
   async function runOcr() {
-    if (!puterUser || !result?.blob || isRecognizingText || isAnalyzing) return
-    setIsConsentOpen(false)
+    if (!image?.file || !result?.blob || isRecognizingText || isProcessing) return
     setOcrError('')
     setCopyError('')
-    setRecognizedText('')
+    setOcrComparison(null)
+    setOcrProgress({ progress: 0, message: 'Menyiapkan OCR lokal…' })
     setIsRecognizingText(true)
     const requestId = ++ocrRequestIdRef.current
+    let phase = 0
+    let worker
     try {
-      const text = await recognizeTextWithPuter(result.blob)
-      if (requestId !== ocrRequestIdRef.current || !window.puter?.auth?.isSignedIn?.()) return
-      setRecognizedText(text)
+      worker = await createWorker(['ind', 'eng'], 1, {
+        logger: ({ status, progress }) => {
+          if (requestId !== ocrRequestIdRef.current) return
+          const value = Number.isFinite(progress) ? progress : 0
+          const phaseLabel = phase === 0 ? 'Membaca teks asli' : 'Membaca teks hasil'
+          setOcrProgress({
+            progress: Math.min(99, Math.round(phase * 50 + value * 50)),
+            message: status === 'recognizing text' ? phaseLabel : `Menyiapkan model OCR: ${status}`,
+          })
+        },
+      })
+      if (requestId !== ocrRequestIdRef.current) return
+      setOcrProgress({ progress: 5, message: 'Menyiapkan gambar asli untuk OCR…' })
+      const originalOcrImage = await prepareOcrImage(image.file)
+      const originalText = (await worker.recognize(originalOcrImage)).data.text.trim()
+      if (requestId !== ocrRequestIdRef.current) return
+      phase = 1
+      setOcrProgress({ progress: 55, message: 'Menyiapkan hasil untuk OCR…' })
+      const resultOcrImage = await prepareOcrImage(result.blob)
+      const resultText = (await worker.recognize(resultOcrImage)).data.text.trim()
+      if (requestId !== ocrRequestIdRef.current) return
+      setOcrComparison({ originalText, resultText })
+      if (!originalText && !resultText) {
+        setOcrError('OCR tidak menemukan teks yang dapat dibandingkan. Periksa teks langsung pada gambar.')
+      }
     } catch (recognitionError) {
       if (requestId === ocrRequestIdRef.current) {
-        setOcrError(`${recognitionError.msg || recognitionError.message || 'OCR gagal membaca gambar.'} Hasil upscale visual tetap tersedia.`)
+        setOcrError(`${recognitionError.message || 'OCR lokal gagal membaca gambar.'} Hasil upscale visual tetap tersedia.`)
       }
     } finally {
-      if (requestId === ocrRequestIdRef.current) setIsRecognizingText(false)
+      if (worker) {
+        try {
+          await worker.terminate()
+        } catch (terminationError) {
+          if (requestId === ocrRequestIdRef.current) {
+            setOcrError(`OCR selesai, tetapi worker gagal ditutup: ${terminationError.message}`)
+          }
+        }
+      }
+      if (requestId === ocrRequestIdRef.current) {
+        setIsRecognizingText(false)
+        setOcrProgress(null)
+      }
     }
   }
 
@@ -437,7 +504,7 @@ function App() {
         : current)
       setResult(null)
       setRecommendation(null)
-      setRecognizedText('')
+      setOcrComparison(null)
       setOcrError('')
       resetCompareView()
       showToast('Orientasi gambar diperbarui.')
@@ -451,7 +518,7 @@ function App() {
 
   async function copyRecognizedText() {
     try {
-      await navigator.clipboard.writeText(recognizedText)
+      await navigator.clipboard.writeText(ocrComparison?.resultText || '')
       setCopyError('')
       showToast('Teks OCR berhasil disalin.')
     } catch (clipboardError) {
@@ -459,9 +526,14 @@ function App() {
     }
   }
 
+  function selectPreset(nextPreset) {
+    setPreset(nextPreset)
+    setAdjustments(PRESET_ADJUSTMENTS[nextPreset] || PRESET_ADJUSTMENTS.photo)
+  }
+
   function applyRecommendation() {
     if (!recommendation) return
-    setPreset(recommendation.preset)
+    selectPreset(recommendation.preset)
     setScale(recommendation.scale)
     setQuality('quality')
     showToast('Saran diterapkan. Periksa pengaturan sebelum memproses.')
@@ -488,12 +560,13 @@ function App() {
     ocrRequestIdRef.current += 1
     setIsAnalyzing(false)
     setIsRecognizingText(false)
+    setOcrProgress(null)
     setIsConsentOpen(false)
     setAnalysisError('')
     setOcrError('')
     setCopyError('')
     setRecommendation(null)
-    setRecognizedText('')
+    setOcrComparison(null)
     const requestId = ++requestIdRef.current
     cancelProcessing()
     setResult(null)
@@ -554,12 +627,13 @@ function App() {
     ocrRequestIdRef.current += 1
     setIsAnalyzing(false)
     setIsRecognizingText(false)
+    setOcrProgress(null)
     setIsConsentOpen(false)
     setAnalysisError('')
     setOcrError('')
     setCopyError('')
     setRecommendation(null)
-    setRecognizedText('')
+    setOcrComparison(null)
     setImage(null)
     setResult(null)
     setError('')
@@ -592,7 +666,10 @@ function App() {
     }
     setError('')
     setResult(null)
-    setRecognizedText('')
+    ocrRequestIdRef.current += 1
+    setIsRecognizingText(false)
+    setOcrProgress(null)
+    setOcrComparison(null)
     setOcrError('')
     setIsProcessing(true)
     setProgress({ progress: 0, stage: 'starting', message: 'Menyiapkan pemrosesan…' })
@@ -603,6 +680,11 @@ function App() {
         mode: quality === 'fast' ? 'fast' : 'quality',
         scale: quality === 'fast' ? 2 : Number(scale),
         preset,
+        noiseReduction: adjustments.noiseReduction,
+        adjustments: {
+          sharpen: adjustments.sharpen,
+          contrast: adjustments.contrast,
+        },
       },
       (update) => {
         let remainingSeconds = null
@@ -625,7 +707,7 @@ function App() {
       const output = await job.promise
       const url = URL.createObjectURL(output.blob)
       setResult({ ...output, url, blob: output.blob })
-      setRecognizedText('')
+      setOcrComparison(null)
       setOcrError('')
       setComparePosition(50)
       resetCompareView()
@@ -743,29 +825,12 @@ function App() {
           <button
             className="button button-outline ai-action"
             type="button"
-            onClick={() => {
-              setConsentAction('advice')
-              setIsConsentOpen(true)
-            }}
+            onClick={() => setIsConsentOpen(true)}
             disabled={isAnalyzing || isRecognizingText || isProcessing || isRotating}
           >
             {isAnalyzing ? 'Menganalisis gambar…' : 'Minta saran AI'}
           </button>
           {analysisError && <p className="ai-error" role="alert">{analysisError}</p>}
-          {result && (
-            <button
-              className="button button-outline ai-action"
-              type="button"
-              onClick={() => {
-                setConsentAction('ocr')
-                setIsConsentOpen(true)
-              }}
-              disabled={isAnalyzing || isRecognizingText || isProcessing}
-            >
-              {isRecognizingText ? 'Membaca teks…' : 'Baca teks hasil (OCR)'}
-            </button>
-          )}
-          {ocrError && <p className="ai-error" role="alert">{ocrError}</p>}
           {recommendation && (
             <div className="ai-recommendation" role="status">
               <strong>
@@ -1027,18 +1092,52 @@ function App() {
                   </button>
                 </div>
               )}
-              {recognizedText && (
+              {result && (
+                <div className="local-ocr-controls">
+                  <button
+                    className="button button-outline"
+                    type="button"
+                    onClick={runOcr}
+                    disabled={isRecognizingText || isProcessing}
+                  >
+                    {isRecognizingText ? 'Membaca teks asli dan hasil…' : 'Bandingkan teks (OCR lokal)'}
+                  </button>
+                  <small>Gambar tidak diunggah. Model bahasa Indonesia dan Inggris diunduh saat pertama kali digunakan.</small>
+                  {ocrProgress && (
+                    <div className="progress-panel" aria-live="polite">
+                      <div className="progress-heading">
+                        <span>{ocrProgress.message}</span>
+                        <strong>{ocrProgress.progress}%</strong>
+                      </div>
+                      <progress max="100" value={ocrProgress.progress}>{ocrProgress.progress}%</progress>
+                    </div>
+                  )}
+                  {ocrError && <p className="ai-error" role="alert">{ocrError}</p>}
+                </div>
+              )}
+              {ocrComparison && (
                 <section className="ocr-result" aria-labelledby="ocr-result-title">
                   <div className="ocr-result-heading">
                     <div>
-                      <span className="panel-kicker">HASIL OCR</span>
-                      <h3 id="ocr-result-title">Teks yang terbaca</h3>
+                      <span className="panel-kicker">HASIL OCR LOKAL</span>
+                      <h3 id="ocr-result-title">Perbandingan teks</h3>
                     </div>
                     <button className="button button-outline" type="button" onClick={copyRecognizedText}>Salin teks</button>
                   </div>
-                  <textarea aria-label="Teks hasil OCR" readOnly value={recognizedText} />
+                  <div className="ocr-comparison">
+                    <OcrTextColumn
+                      label="Asli"
+                      text={ocrComparison.originalText}
+                      comparisonText={ocrComparison.resultText}
+                    />
+                    <OcrTextColumn
+                      label="Hasil"
+                      text={ocrComparison.resultText}
+                      comparisonText={ocrComparison.originalText}
+                    />
+                  </div>
+                  <small>Kata yang berbeda disorot setelah penyelarasan teks. Pembesaran dan OCR tidak memulihkan isi yang hilang; periksa nama, angka, tanggal, dan tanda tangan dengan gambar asli.</small>
                   {copyError && <p className="ai-error" role="alert">{copyError}</p>}
-                  <small>Periksa nama, angka, tanggal, dan tanda tangan dengan dokumen asli. OCR dapat keliru.</small>
                 </section>
               )}
             </div>
@@ -1061,7 +1160,7 @@ function App() {
                       key={item.id}
                       type="button"
                       aria-pressed={preset === item.id}
-                      onClick={() => setPreset(item.id)}
+                      onClick={() => selectPreset(item.id)}
                     >
                       <span className={`preset-dot ${item.id}`} />
                       <span className="preset-text"><strong>{item.label}</strong><small>{item.description}</small></span>
@@ -1069,7 +1168,7 @@ function App() {
                     </button>
                   ))}
                 </div>
-                <small className="setting-hint">Preset memberi panduan penggunaan; model yang dipakai tetap model umum yang sama.</small>
+                <small className="setting-hint">Preset memilih nilai awal peningkatan; model upscale umum tetap sama.</small>
               </fieldset>
 
               {preset === 'document' && (
@@ -1117,6 +1216,46 @@ function App() {
                   ))}
                 </div>
                 {quality === 'fast' && <small className="setting-hint">Mode Cepat memakai skala 2×.</small>}
+              </fieldset>
+
+              <fieldset className="setting-group adjustment-group" disabled={isProcessing || isRotating}>
+                <legend>Peningkatan kualitas</legend>
+                <label className="adjustment-control">
+                  <span>Kurangi noise <strong>{adjustments.noiseReduction}%</strong></span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={adjustments.noiseReduction}
+                    onChange={(event) => setAdjustments((current) => ({ ...current, noiseReduction: Number(event.target.value) }))}
+                  />
+                </label>
+                <label className="adjustment-control">
+                  <span>Ketajaman <strong>{adjustments.sharpen}%</strong></span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={adjustments.sharpen}
+                    onChange={(event) => setAdjustments((current) => ({ ...current, sharpen: Number(event.target.value) }))}
+                  />
+                </label>
+                <label className="adjustment-control">
+                  <span>Kontras <strong>{adjustments.contrast > 0 ? '+' : ''}{adjustments.contrast}</strong></span>
+                  <input
+                    type="range"
+                    min="-30"
+                    max="30"
+                    step="1"
+                    value={adjustments.contrast}
+                    onChange={(event) => setAdjustments((current) => ({ ...current, contrast: Number(event.target.value) }))}
+                  />
+                </label>
+                <small className="setting-hint">
+                  Dokumen memakai nilai awal yang lebih tajam. Reduksi noise menghaluskan gambar ringan dan dapat mengurangi detail halus.
+                </small>
               </fieldset>
 
               <div className="engine-pending">
@@ -1200,21 +1339,11 @@ function App() {
         <div className="consent-backdrop">
           <section className="consent-dialog" role="dialog" aria-modal="true" aria-labelledby="consent-title">
             <span className="panel-kicker">PERSETUJUAN PRIVASI</span>
-            <h2 id="consent-title">
-              {consentAction === 'ocr' ? 'Kirim hasil gambar untuk OCR?' : 'Kirim gambar untuk analisis AI?'}
-            </h2>
-            {consentAction === 'ocr' ? (
-              <p>
-                Hasil gambar yang sudah diproses akan dikirim ke Puter OCR untuk mengekstrak teks.
-                Pembesaran dapat mengandung detail tebakan; periksa teks dengan sumber asli.
-                Penggunaan layanan dapat tunduk pada kuota atau biaya akun Puter.
-              </p>
-            ) : (
-              <p>
-                Gambar asli akan dikirim ke Puter AI untuk disarankan preset dan skala.
-                Login Firebase tidak menautkan akun ke Puter. Penggunaan layanan dapat tunduk pada kuota atau biaya akun Puter.
-              </p>
-            )}
+            <h2 id="consent-title">Kirim gambar untuk analisis AI?</h2>
+            <p>
+              Gambar asli akan dikirim ke Puter AI untuk disarankan preset dan skala.
+              Login Firebase tidak menautkan akun ke Puter. Penggunaan layanan dapat tunduk pada kuota atau biaya akun Puter.
+            </p>
             <p>Jika tidak menyetujui, tutup dialog ini. Pemrosesan gambar lokal tetap tersedia dan tidak mengirim gambar.</p>
             <div className="consent-actions">
               <button className="button button-outline" type="button" onClick={() => setIsConsentOpen(false)}>
@@ -1223,9 +1352,9 @@ function App() {
               <button
                 className="button button-primary"
                 type="button"
-                onClick={consentAction === 'ocr' ? runOcr : requestAiAnalysis}
+                onClick={requestAiAnalysis}
               >
-                {consentAction === 'ocr' ? 'Setuju & baca teks' : 'Setuju & analisis'}
+                Setuju & analisis
               </button>
             </div>
           </section>

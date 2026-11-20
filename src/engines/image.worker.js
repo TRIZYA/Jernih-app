@@ -3,6 +3,7 @@ import * as tf from '@tensorflow/tfjs'
 import Upscaler from 'upscaler'
 import defaultModel from '@upscalerjs/default-model'
 import { MAX_OUTPUT_PIXELS } from './limits.js'
+import { adjustPixelChannel } from './imageAdjustments.js'
 
 const MODEL_URL = '/models/realesr-general-x4v3.onnx'
 const FAST_MODEL_URL = '/models/upscalerjs-default/model.json'
@@ -174,16 +175,12 @@ async function upscaleOnnx(bitmap, requestedScale, job, provider) {
 
 async function upscaleFast(bitmap, requestedScale, job) {
   report(2, 'loading', 'Menyiapkan mesin Cepat di perangkat…')
-  let backend = 'webgl'
-  try {
-    const initialized = await tf.setBackend(backend)
-    if (!initialized) throw new Error('Backend WebGL tidak dapat diinisialisasi di worker.')
-    await tf.ready()
-  } catch (error) {
-    report(3, 'fallback', `UpscalerJS WebGL tidak tersedia di worker: ${error.message}. Mencoba CPU…`)
-    backend = 'cpu'
-    await tf.setBackend(backend)
-    await tf.ready()
+  const backend = 'webgl'
+  const initialized = await tf.setBackend(backend)
+  if (!initialized) throw new Error('Backend WebGL tidak dapat diinisialisasi di worker.')
+  await tf.ready()
+  if (tf.getBackend() !== backend) {
+    throw new Error(`UpscalerJS memerlukan WebGL, tetapi TensorFlow.js memilih ${tf.getBackend()}.`)
   }
   ensureActive(job)
   const upscaler = new Upscaler({
@@ -304,11 +301,32 @@ async function upscaleClassic(bitmap, requestedScale, job) {
   return { canvas, outputWidth, outputHeight, engine: 'Cadangan klasik · resampling + sharpen' }
 }
 
-async function enhanceDocumentCanvas(canvas, job) {
+function preprocessBitmap(bitmap, strength, job) {
+  const noiseReduction = Math.max(0, Math.min(100, Number(strength) || 0))
+  if (!noiseReduction) return bitmap
+  ensureActive(job)
+  report(2, 'preprocess', 'Mengurangi noise dan artefak kompresi…')
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Browser tidak dapat menyiapkan pra-pemrosesan gambar.')
+  context.drawImage(bitmap, 0, 0)
+  context.globalAlpha = (noiseReduction / 100) * 0.65
+  context.filter = `blur(${((noiseReduction / 100) * 0.8).toFixed(2)}px)`
+  context.drawImage(bitmap, 0, 0)
+  context.filter = 'none'
+  context.globalAlpha = 1
+  return canvas
+}
+
+async function enhanceCanvas(canvas, settings, job) {
+  const sharpen = Math.max(0, Math.min(100, Number(settings.sharpen) || 0))
+  const contrast = Math.max(-30, Math.min(30, Number(settings.contrast) || 0))
+  if (!sharpen && !contrast) return
+
   const context = canvas.getContext('2d', { willReadFrequently: true })
   const width = canvas.width
   const height = canvas.height
-  const chunkHeight = 64
+  const chunkHeight = 32
 
   for (let startY = 0; startY < height; startY += chunkHeight) {
     ensureActive(job)
@@ -327,17 +345,17 @@ async function enhanceDocumentCanvas(canvas, job) {
         const above = index - width * 4
         const below = index + width * 4
         for (let channel = 0; channel < 3; channel += 1) {
-          const center = pixels[index + channel]
           const neighborAverage = (
             pixels[index - 4 + channel] +
             pixels[index + 4 + channel] +
             pixels[above + channel] +
             pixels[below + channel]
           ) / 4
-          const sharpened = center + (center - neighborAverage) * 0.4
-          enhanced[index + channel] = Math.max(
-            0,
-            Math.min(255, (sharpened - 127.5) * 1.05 + 127.5),
+          enhanced[index + channel] = adjustPixelChannel(
+            pixels[index + channel],
+            neighborAverage,
+            sharpen,
+            contrast,
           )
         }
       }
@@ -348,7 +366,7 @@ async function enhanceDocumentCanvas(canvas, job) {
     report(
       90 + Math.round((endY / height) * 4),
       'postprocess',
-      `Menajamkan teks dokumen · ${endY}/${height} baris`,
+      `Menyesuaikan ketajaman dan kontras · ${endY}/${height} baris`,
       endY,
       height,
     )
@@ -364,11 +382,12 @@ async function runJob(file, options, job) {
       throw new Error('Skala gambar tidak valid.')
     }
     validateOutputSize(bitmap.width * requestedScale, bitmap.height * requestedScale)
+    const processBitmap = preprocessBitmap(bitmap, options.noiseReduction, job)
 
     let result
     if (options.mode === 'fast') {
       try {
-        result = await upscaleFast(bitmap, requestedScale, job)
+        result = await upscaleFast(processBitmap, requestedScale, job)
       } catch (error) {
         ensureActive(job)
         report(4, 'fallback', `Mode Cepat tidak tersedia: ${error.message}. Beralih ke mesin kualitas…`)
@@ -379,32 +398,32 @@ async function runJob(file, options, job) {
       let provider = 'webgpu'
       try {
         report(1, 'loading', 'Memuat model Real-ESRGAN…')
-        result = await upscaleOnnx(bitmap, requestedScale, job, provider)
+        result = await upscaleOnnx(processBitmap, requestedScale, job, provider)
       } catch (error) {
         ensureActive(job)
         console.warn('WebGPU gagal digunakan; beralih ke WASM.', error)
         report(1, 'fallback', 'WebGPU tidak tersedia. Beralih ke WASM…')
         provider = 'wasm'
         try {
-          result = await upscaleOnnx(bitmap, requestedScale, job, provider)
+          result = await upscaleOnnx(processBitmap, requestedScale, job, provider)
         } catch (wasmError) {
           ensureActive(job)
           report(1, 'fallback', `Model ONNX gagal: ${wasmError.message}. Mencoba mode cadangan…`)
           try {
             if (options.mode === 'quality') {
-              result = await upscaleFast(bitmap, requestedScale, job)
+              result = await upscaleFast(processBitmap, requestedScale, job)
             }
           } catch (fastError) {
             ensureActive(job)
             report(5, 'fallback', `Mode Cepat tidak tersedia: ${fastError.message}. Menggunakan cadangan klasik…`)
           }
-          if (!result) result = await upscaleClassic(bitmap, requestedScale, job)
+          if (!result) result = await upscaleClassic(processBitmap, requestedScale, job)
         }
       }
     }
 
     ensureActive(job)
-    if (options.preset === 'document') await enhanceDocumentCanvas(result.canvas, job)
+    await enhanceCanvas(result.canvas, options.adjustments || {}, job)
     ensureActive(job)
     report(95, 'export', 'Menyiapkan pratinjau hasil…')
     const blob = await result.canvas.convertToBlob({ type: 'image/png' })

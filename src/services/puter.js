@@ -112,17 +112,3 @@ export async function analyzeImageWithPuter(file, signal) {
   if (signal.aborted) throw new DOMException('Analisis dibatalkan.', 'AbortError')
   return parseRecommendation(readResponseText(response))
 }
-
-export async function recognizeTextWithPuter(blob) {
-  const puter = await loadPuter()
-  if (!puter.auth?.isSignedIn?.()) {
-    throw new Error('Masuk ke akun Puter terlebih dahulu untuk menggunakan OCR.')
-  }
-  if (!puter.ai?.img2txt) throw new Error('Fitur OCR Puter tidak tersedia pada SDK ini.')
-
-  const text = await puter.ai.img2txt(blob, { provider: 'mistral' })
-  if (typeof text !== 'string' || !text.trim()) {
-    throw new Error('OCR tidak menemukan teks yang dapat dibaca pada hasil gambar.')
-  }
-  return text.trim()
-}

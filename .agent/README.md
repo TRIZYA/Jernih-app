@@ -2,7 +2,8 @@
 
 Aplikasi web untuk memperjelas gambar yang blur, beresolusi kecil, atau rusak oleh kompresi JPEG, termasuk foto, ilustrasi, dan dokumen bertulisan seperti piagam atau sertifikat. Seluruh proses berjalan **di browser pengguna**, jadi gambar tidak diunggah ke server mana pun dan proyek ini bisa dibuat serta di-hosting **sepenuhnya gratis**.
 
-> Status: persiapan Fase 1 selesai; spike Fase 0 masih berjalan.
+> Status: mesin Fase 2 dan UI Fase 3 selesai. Peningkatan Fase 4 menyediakan
+> pengaturan kualitas dan OCR lokal; evaluasi visual lintas fixture masih berjalan.
 
 ## Pendekatan
 
@@ -30,7 +31,8 @@ Blur sedang sampai berat dan artefak kompresi tidak bisa diselesaikan hanya deng
 **Peningkatan kualitas**
 - Pra-proses opsional: kurangi artefak kompresi/noise sebelum upscale
 - Pasca-proses opsional: sharpen dan kontras ringan dengan slider
-- Mode Dokumen: perlakuan khusus untuk teks dan garis, dengan peringatan bahwa karakter kecil bisa salah ditebak
+- Mode Dokumen: nilai awal peningkatan khusus untuk teks dan garis, dengan peringatan bahwa karakter kecil bisa salah ditebak
+- OCR lokal: bandingkan teks sebelum/sesudah dan sorot kata yang berbeda
 
 **Fitur AI pendukung (puter.js, opsional)**
 - Analisis gambar: tipe, tingkat blur, dan saran preset serta skala
@@ -38,7 +40,6 @@ Blur sedang sampai berat dan artefak kompresi tidak bisa diselesaikan hanya deng
 - Gambar dikirim ke layanan pihak ketiga, jadi wajib ada persetujuan pengguna
 
 **Fitur lanjutan (opsional)**
-- Pemeriksa teks (OCR) yang membandingkan teks sebelum dan sesudah untuk menandai kemungkinan karakter berubah
 - Restorasi wajah
 - Antrean batch dan unduh ZIP
 - Riwayat lokal (IndexedDB)
@@ -147,7 +148,7 @@ Buka `http://localhost:5173`. Tidak ada file `.env` yang wajib untuk MVP.
 - [ ] Mesin ONNX dengan tile, progres, dan batal
 - [ ] Slider sebelum/sesudah dan unduh
 - [ ] Preset, pra/pasca-proses, dan cadangan klasik
-- [ ] Mode Cepat (UpscalerJS)
+- [x] Mode Cepat (UpscalerJS)
 - [ ] Saran AI dan pemeriksa teks
 - [ ] Deploy gratis
 

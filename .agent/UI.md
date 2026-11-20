@@ -18,11 +18,15 @@ Dokumen ini menjelaskan bagaimana UI seharusnya merepresentasikan alur memperjel
 Workspace sudah terhubung ke pemrosesan lokal di Web Worker: unggah/drag-and-drop/
 tempel, pratinjau, validasi gambar, pengaturan preset, skala dan mode, peringatan
 Dokumen, progres nyata, estimasi kasar waktu tersisa, pembatalan, rotasi 90°,
-slider sebelum/sesudah, serta ekspor PNG/JPG/WebP. Preset Dokumen mendapat
-sharpen/kontras ringan otomatis; semua preset masih memakai model upscale umum.
-Puter.js memiliki login manual tersendiri, terpisah dari Firebase, dan dialog
-persetujuan sebelum gambar dikirim untuk saran atau OCR. OCR mengeluarkan teks
-hasil yang dapat disalin, bukan memulihkan isi dokumen yang hilang. Panel
+slider sebelum/sesudah, serta ekspor PNG/JPG/WebP. Preset memberi nilai awal
+pengurangan noise, ketajaman, dan kontras; semua tetap memakai model upscale
+umum. Slider peningkatan kualitas dapat disesuaikan sebelum proses. OCR lokal
+Tesseract.js menyiapkan gambar dengan grayscale, kontras, dan skala adaptif,
+lalu membandingkan teks gambar asli dan hasil serta menyorot kata yang berbeda;
+gambar tidak dikirim, meski model bahasa diunduh saat penggunaan pertama.
+Puter.js hanya untuk saran AI dan memakai login manual tersendiri,
+terpisah dari Firebase, dengan persetujuan sebelum gambar dikirim. OCR tidak
+memulihkan isi dokumen yang hilang. Panel
 Analisis AI ditempatkan dalam kolom pratinjau, tepat di bawah kartu pratinjau,
 dengan latar putih.
 Pembanding mendukung zoom bersama, drag langsung di area di luar garis pembanding untuk
@@ -58,11 +62,12 @@ Satu halaman dengan tiga keadaan: kosong, memproses, dan hasil.
 
 ## 2. Panel pengaturan
 
-- **Preset:** Foto, Dokumen/Teks, Ilustrasi/Anime. Preset menentukan model dan pra/pasca-proses bawaan.
+- **Preset:** Foto, Dokumen/Teks, Ilustrasi/Anime. Preset memberi nilai awal pra/pasca-proses; model upscale umum tetap sama.
 - **Kualitas:** Cepat (UpscalerJS) atau Kualitas (Real-ESRGAN ONNX). Tampilkan keterangan kecepatan dan kebutuhan perangkat.
 - **Skala:** 2x atau 4x.
-- **Lanjutan (tersembunyi secara default):** pengurangan artefak kompresi, sharpen, kontras, ukuran tile.
-- **Minta saran AI/OCR** (opsional, Puter.js): login Puter eksplisit dan persetujuan sebelum gambar dikirim; tidak terkait sesi Firebase.
+- **Peningkatan kualitas:** pengurangan noise/artefak ringan, ketajaman, dan kontras dengan slider.
+- **OCR lokal:** praproses gambar, bandingkan kata sumber dan hasil; model bahasa diunduh saat pertama kali dipakai, gambar tetap di perangkat. Hasil OCR tidak menjamin isi akurat.
+- **Minta saran AI** (opsional, Puter.js): login Puter eksplisit dan persetujuan sebelum gambar dikirim; tidak terkait sesi Firebase.
 - Indikator mesin yang dipakai: WebGPU, WASM, atau cadangan klasik.
 
 ## 3. Kondisi khusus
@@ -167,7 +172,8 @@ src/
 - [x] Indikator mesin.
 - [x] Banner peringatan mode Dokumen.
 - [x] Zoom dan geser tersinkron pada slider.
-- [ ] Pengaturan lanjutan (artefak kompresi, sharpen).
+- [x] Pengurangan noise/artefak ringan dan slider sharpen/kontras.
+- [x] OCR lokal membandingkan teks sumber dan hasil serta menandai kata berbeda setelah penyelarasan, tanpa menganggap beda baris sebagai beda isi.
 - [x] Toast, peringatan ukuran gambar, dan mode cadangan.
 
 ### Prioritas P2
